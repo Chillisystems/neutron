@@ -70,17 +70,25 @@ class TrunkPlugin(service_base.ServicePluginBase,
     def _extend_port_trunk_details(port_res, port_db):
         """Add trunk details to a port."""
         if port_db.trunk_port:
+            core_plugin = directory.get_plugin()
             subports = {
                 x.port_id: {'segmentation_id': x.segmentation_id,
                             'segmentation_type': x.segmentation_type,
                             'port_id': x.port_id}
                 for x in port_db.trunk_port.sub_ports
             }
-            core_plugin = directory.get_plugin()
             ports = core_plugin.get_ports(
                 context.get_admin_context(), filters={'id': subports})
+            net_ids = [port['network_id'] for port in ports]
+            networks = core_plugin.get_networks(context.get_admin_context(), filters={'id': net_ids})
+            networks = {
+                network['id']: network for network in networks
+            }
             for port in ports:
                 subports[port['id']]['mac_address'] = port['mac_address']
+                subports[port['id']]['provider:physical_network'] =\
+                    networks[port['network_id']]['provider:physical_network']
+
             trunk_details = {'trunk_id': port_db.trunk_port.id,
                              'sub_ports': [x for x in subports.values()]}
             port_res['trunk_details'] = trunk_details
@@ -278,6 +286,26 @@ class TrunkPlugin(service_base.ServicePluginBase,
         registry.notify(constants.TRUNK, events.AFTER_DELETE, self,
                         payload=payload)
 
+    def _get_physnets(self, context, core_plugin, subports):
+        port_ids = [subport['port_id'] for subport in subports]
+        ports = core_plugin.get_ports(context, filters={'id': port_ids})
+        network_ids = [port['network_id'] for port in ports]
+        networks = core_plugin.get_networks(context, filters={'id': network_ids})
+
+        mapped_ports = {
+            port['id']: port for port in ports
+        }
+        mapped_networks = {
+            network['id']: network for network in networks
+        }
+
+        physnets = {
+            port_id: mapped_networks[mapped_ports[port_id]['network_id']]['provider:physical_network']
+            for port_id in port_ids
+        }
+
+        return physnets
+
     @db_base_plugin_common.convert_result_to_dict
     def add_subports(self, context, trunk_id, subports):
         """Add one or more subports to trunk."""
@@ -319,10 +347,19 @@ class TrunkPlugin(service_base.ServicePluginBase,
                 obj.create()
                 trunk['sub_ports'].append(obj)
                 added_subports.append(obj)
+
+            core_plugin = directory.get_plugin()
+            physnets = self._get_physnets(context, core_plugin, trunk['sub_ports'])
+            parent_port = core_plugin.get_port(context, trunk.port_id)
+            network = core_plugin.get_network(context, parent_port['network_id'])
+
             payload = callbacks.TrunkPayload(context, trunk_id,
                                              current_trunk=trunk,
                                              original_trunk=original_trunk,
-                                             subports=added_subports)
+                                             subports=added_subports,
+                                             parent_port=parent_port,
+                                             network=network,
+                                             physnets=physnets)
             if added_subports:
                 registry.notify(constants.SUBPORTS, events.PRECOMMIT_CREATE,
                                 self, payload=payload)
@@ -371,10 +408,19 @@ class TrunkPlugin(service_base.ServicePluginBase,
             # with multiple concurrent requests), the status is still forced
             # to DOWN. See add_subports() for more details.
             trunk.update(status=constants.DOWN_STATUS)
+
+            core_plugin = directory.get_plugin()
+            physnets = self._get_physnets(context, core_plugin, trunk['sub_ports'])
+            parent_port = core_plugin.get_port(context, trunk.port_id)
+            network = core_plugin.get_network(context, parent_port['network_id'])
+
             payload = callbacks.TrunkPayload(context, trunk_id,
                                              current_trunk=trunk,
                                              original_trunk=original_trunk,
-                                             subports=removed_subports)
+                                             subports=removed_subports,
+                                             parent_port=parent_port,
+                                             network=network,
+                                             physnets=physnets)
             if removed_subports:
                 registry.notify(constants.SUBPORTS, events.PRECOMMIT_DELETE,
                                 self, payload=payload)

@@ -19,12 +19,16 @@ class TrunkPayload(object):
     """Payload for trunk-related callback registry notifications."""
 
     def __init__(self, context, trunk_id, current_trunk=None,
-                 original_trunk=None, subports=None):
+                 original_trunk=None, subports=None, parent_port=None,
+                 network=None, physnets=None):
         self.context = context
         self.trunk_id = trunk_id
         self.current_trunk = current_trunk
         self.original_trunk = original_trunk
         self.subports = subports if subports else []
+        self.parent_port = parent_port
+        self.network = network
+        self.physnets = physnets
 
     def __eq__(self, other):
         return (isinstance(other, self.__class__) and
