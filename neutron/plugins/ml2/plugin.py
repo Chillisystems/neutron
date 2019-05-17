@@ -499,19 +499,26 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
         try_again = False
 
         if self._should_bind_port(context):
-            bind_context = self._bind_port(context)
+            bind_context = self._build_new_context(context)
+            try:
+                bind_context = self._bind_port(bind_context)
 
-            if bind_context.vif_type != portbindings.VIF_TYPE_BINDING_FAILED:
-                # Binding succeeded. Suggest notifying of successful binding.
-                need_notify = True
-            else:
-                # Current attempt binding failed, try to bind again.
-                try_again = True
+                if bind_context.vif_type != portbindings.VIF_TYPE_BINDING_FAILED:
+                    # Binding succeeded. Suggest notifying of successful binding.
+                    need_notify = True
+                else:
+                    # Current attempt binding failed, try to bind again.
+                    try_again = True
+            except ml2_exc.MechanismDriverCriticalError:
+                bind_context._binding.vif_type = portbindings.VIF_TYPE_BINDING_FAILED
+                try_again = False
+                raise
+
             context = bind_context
 
         return context, need_notify, try_again
 
-    def _bind_port(self, orig_context):
+    def _build_new_context(self, orig_context):
         # Construct a new PortContext from the one from the previous
         # transaction.
         port = orig_context.current
@@ -531,8 +538,11 @@ class Ml2Plugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         # Attempt to bind the port and return the context with the
         # result.
-        self.mechanism_manager.bind_port(new_context)
         return new_context
+
+    def _bind_port(self, context):
+        self.mechanism_manager.bind_port(context)
+        return context
 
     def _commit_port_binding(self, orig_context, bind_context,
                              need_notify, try_again):

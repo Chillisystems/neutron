@@ -31,6 +31,10 @@ class MechanismDriverError(exceptions.MultipleExceptions):
         super(MechanismDriverError, self).__init__(errors or [])
 
 
+class MechanismDriverCriticalError(exceptions.NeutronException):
+    message = _("Mechanism driver failed critically.")
+
+
 class ExtensionDriverError(exceptions.InvalidInput):
     """Extension driver call failed."""
     message = _("Extension %(driver)s failed.")
